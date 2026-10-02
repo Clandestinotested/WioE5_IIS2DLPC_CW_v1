@@ -5,7 +5,7 @@
 #include <stdarg.h>
 #include <string.h>
 
-/* CW state machine */
+/* CW State Machine */
 static uint8_t cw_active = 0U;
 static uint32_t cw_start_ms = 0U;
 static uint8_t last_tx_state = 0U;
@@ -22,6 +22,7 @@ static void UART_PrintfDebug(const char *fmt, ...)
 
 void App_CW_Init(void)
 {
+    /* Initialize SUBGHZ radio */
     SubGHz_Init();
     cw_active = 0U;
     cw_start_ms = 0U;
@@ -35,7 +36,8 @@ void App_CW_Start(void)
         cw_active = 1U;
         last_tx_state = 0U;
         UART_PrintfDebug("CW sequence started (15s total: 600ms ON / 1000ms OFF)\r\n");
-        SubGHz_TX_Start_CW();
+        /* Start CW at 868 MHz, 14 dBm */
+        SubGHz_TX_Start_CW(868000000UL, 14);
     }
 }
 
@@ -83,7 +85,7 @@ void App_CW_Task(void)
     /* State change detection and action */
     if (should_tx != last_tx_state) {
         if (should_tx == 1U) {
-            SubGHz_TX_Start_CW();
+            SubGHz_TX_Start_CW(868000000UL, 14);
             UART_PrintfDebug("  [%05lums] CW ON\r\n", elapsed_total);
         } else {
             SubGHz_TX_Stop();

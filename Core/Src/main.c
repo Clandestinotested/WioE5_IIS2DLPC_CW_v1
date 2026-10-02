@@ -274,7 +274,7 @@ int main(void)
     UART_PrintfDebug("Initializing motion sensor...\r\n");
     App_Motion_Init();
 
-    UART_PrintfDebug("Initializing SUBGHZ radio...\r\n");
+    UART_PrintfDebug("Initializing SUBGHZ radio (STM32CubeWL v1.5.0)...\r\n");
     App_CW_Init();
 
     UART_PrintfDebug("\r\nSystem ready\r\n");
