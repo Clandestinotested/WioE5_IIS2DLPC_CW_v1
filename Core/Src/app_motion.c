@@ -1,7 +1,9 @@
 #include "app_motion.h"
+#include "app_subghz.h"
 #include "main.h"
 #include <stdio.h>
 #include <stdarg.h>
+#include <string.h>
 
 static uint8_t I2C_ReadReg8(uint8_t reg, uint8_t *value)
 {

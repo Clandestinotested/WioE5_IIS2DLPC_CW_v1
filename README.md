@@ -4,7 +4,8 @@ Complete STM32CubeIDE project template for Seeed Wio-E5 mini with:
 - **IIS2DLPC** accelerometer on I2C2 (PA15 = SDA, PB15 = SCL)
 - **INT1** on PA9 / EXTI9 for any-motion wake-up interrupt
 - **USART1** debug on PB6 (TX) / PB7 (RX) via USB-UART bridge
-- **Direct SUBGHZ** radio control for CW pulse pattern (600ms ON / 1000ms OFF / 15s total)
+- **SUBGHZ Direct Radio Control** for CW pulse pattern (600ms ON / 1000ms OFF / 15s total)
+- **STM32CubeWL v1.5.0** compatible SUBGHZ driver integration
 
 ## Hardware Setup
 
@@ -43,14 +44,38 @@ Pull-ups:
 - **Stop Bits**: 1
 - **Parity**: None
 - **Flow Control**: None
+- **FIFO**: Disabled
+
+### System Clock
+
+- **HSE**: 32 MHz (on-board crystal)
+- **SYSCLK**: 32 MHz (via PLL)
+- **Peripherals**: HCLK = 32 MHz, PCLK1 = 32 MHz, PCLK2 = 32 MHz
 
 ## Software Architecture
 
+### File Structure
+
+```text
+Core/
+├── Inc/
+│   ├── main.h              (main definitions, IIS2DLPC registers)
+│   ├── app_motion.h        (motion sensor interface)
+│   ├── app_cw.h            (CW pulse generator interface)
+│   └── app_subghz.h        (SUBGHZ radio driver wrapper)
+└── Src/
+    ├── main.c              (system initialization, main loop)
+    ├── app_motion.c        (IIS2DLPC any-motion handling)
+    ├── app_cw.c            (CW pulse state machine)
+    └── app_subghz.c        (STM32CubeWL v1.5.0 radio wrapper)
+```
+
 ### Main Application (`Core/Src/main.c`)
 
-- Initialization of HAL, clock tree, GPIO, I2C2, USART1
+- Initialization of HAL, clock tree (32 MHz), GPIO, I2C2, USART1
 - Main loop calls `App_Motion_Task()` and `App_CW_Task()` every 10 ms
 - UART debug output (115200 baud)
+- Error handler for system faults
 
 ### Motion Sensor (`Core/Src/app_motion.c`)
 
@@ -64,75 +89,215 @@ Pull-ups:
 
 - 15-second pulse sequence: 600 ms ON, 1000 ms OFF
 - State machine with HAL_GetTick() timing
-- Placeholder functions for actual SUBGHZ driver integration:
-  - `SubGHz_TX_Start_CW()` — Enable radio TX (replace with STM32WLE5 driver call)
-  - `SubGHz_TX_Stop_CW()` — Disable radio TX (replace with STM32WLE5 driver call)
-- Debug output logs ON/OFF transitions
+- Calls `SubGHz_TX_Start_CW()` for TX enable
+- Calls `SubGHz_TX_Stop()` for TX disable
+- Debug output logs ON/OFF transitions with timestamps
 
-## SUBGHZ Integration
+### SUBGHZ Radio Driver Wrapper (`Core/Src/app_subghz.c`)
 
-The CW transmitter includes two placeholder functions in `app_cw.c`:
+**STM32CubeWL v1.5.0 Native API Integration**
 
+This module wraps the STM32CubeWL radio driver and provides:
+
+#### Initialization
 ```c
-static void SubGHz_TX_Start_CW(void)
+void SubGHz_Init(void)
 {
-    /* TODO: Replace with actual SUBGHZ driver call.
-     *
-     * Example (pseudo-code):
-     *   SubGHz_TX_SetFrequency(868000000);  // 868 MHz
-     *   SubGHz_TX_SetPower(14);             // 14 dBm
-     *   SubGHz_TX_StartContinuousWave();
-     */
-}
+    /* Initialize RadioEvents callbacks */
+    RadioEvents.TxDone = OnTxDone;
+    RadioEvents.RxDone = OnRxDone;
+    RadioEvents.TxTimeout = OnTxTimeout;
+    RadioEvents.RxTimeout = OnRxTimeout;
+    RadioEvents.RxError = OnRxError;
 
-static void SubGHz_TX_Stop_CW(void)
-{
-    /* TODO: Replace with actual SUBGHZ driver call.
-     *
-     * Example (pseudo-code):
-     *   SubGHz_TX_Stop();
-     */
+    /* Initialize radio driver */
+    Radio.Init(&RadioEvents);
+
+    /* Set frequency and TX config */
+    Radio.SetChannel(868000000UL);        /* 868 MHz (Europe) */
+    Radio.SetTxConfig(MODEM_FSK, 14, ...) /* 14 dBm, FSK modulation */
 }
 ```
 
-### Integrating Your SUBGHZ Driver
+#### Continuous Wave Transmission
+```c
+void SubGHz_TX_Start_CW(void)
+{
+    /* Start transmit continuous wave mode */
+    Radio.SetTxContinuousWave(868000000UL, 14, 0xFFFFFFFF);
+}
 
-1. Include your SUBGHZ driver header in `app_cw.c`:
-   ```c
-   #include "subghz_driver.h"  // or whatever your driver is called
+void SubGHz_TX_Stop(void)
+{
+    /* Stop TX and return to STDBY */
+    Radio.IrqProcess();
+    Radio.Standby();
+}
+```
+
+#### Frequency/Power Configuration
+```c
+void SubGHz_SetFrequency(uint32_t freq_hz)
+void SubGHz_SetTxPower(int8_t power_dbm)
+```
+
+### Radio Configuration Defaults
+
+```c
+#define SUBGHZ_FREQ_868MHZ         868000000UL   /* Europe */
+#define SUBGHZ_FREQ_915MHZ         915000000UL   /* USA/Australia */
+#define SUBGHZ_TX_POWER            14            /* 14 dBm */
+#define SUBGHZ_BANDWIDTH           125000        /* 125 kHz */
+#define SUBGHZ_DATARATE            4800          /* 4.8 kbps */
+#define SUBGHZ_FDEV                4800          /* 4.8 kHz deviation */
+```
+
+## Integration with STM32CubeWL v1.5.0
+
+### Required Driver Files
+
+Your STM32CubeWL package should include:
+
+```text
+Drivers/STM32WLE5xx_HAL_Driver/Inc/
+├── radio.h
+├── subghz_phy.h
+└── ... (other HAL headers)
+
+Drivers/STM32WLE5xx_HAL_Driver/Src/
+├── radio.c
+├── subghz_phy.c
+└── ... (other HAL implementations)
+```
+
+### Include Paths in STM32CubeIDE
+
+1. **Project → Properties → C/C++ General → Paths and Symbols → Includes**
+   ```
+   Drivers/STM32WLE5xx_HAL_Driver/Inc
+   Drivers/CMSIS/Include
+   Core/Inc
    ```
 
-2. Replace the placeholder functions with actual driver calls:
-   ```c
-   static void SubGHz_TX_Start_CW(void)
-   {
-       SUBGHZ_Init();
-       SUBGHZ_SetFrequency(868000000);
-       SUBGHZ_SetPower(14);
-       SUBGHZ_StartTxCW();
-   }
+2. **Symbols (Preprocessor)**
+   ```
+   STM32WLE5xx
+   USE_HAL_DRIVER
    ```
 
-3. Recompile and test.
+### Linker Script
+
+Ensure your linker script (`STM32WLE5JCIx_FLASH.ld`) includes:
+- Flash memory layout for STM32WLE5JC
+- RAM allocation for HAL structures
+- Radio mailbox area (typically at fixed memory location)
+
+## Radio API Reference (STM32CubeWL v1.5.0)
+
+### struct RadioEvents_t
+
+```c
+typedef struct
+{
+    void ( *TxDone )( void );
+    void ( *RxDone )( uint8_t *payload, uint16_t size, int16_t rssi, int8_t snr );
+    void ( *TxTimeout )( void );
+    void ( *RxTimeout )( void );
+    void ( *RxError )( void );
+} RadioEvents_t;
+```
+
+### Radio.Init()
+
+```c
+void Radio.Init(RadioEvents_t *events)
+```
+Initialize radio driver with callback structure.
+
+### Radio.SetChannel()
+
+```c
+void Radio.SetChannel(uint32_t freq)
+```
+Set operating frequency in Hz (e.g., 868000000 for 868 MHz).
+
+### Radio.SetTxConfig()
+
+```c
+void Radio.SetTxConfig(
+    RadioModems_t modem,      /* MODEM_FSK or MODEM_LORA */
+    int8_t power,              /* TX power in dBm */
+    uint32_t fdev,             /* FSK frequency deviation Hz */
+    uint32_t bandwidth,        /* FSK bandwidth Hz */
+    uint32_t datarate,         /* Datarate in bits/sec */
+    uint8_t coderate,          /* LoRa coding rate (ignored for FSK) */
+    uint16_t preambleLen,      /* Preamble length */
+    bool fixLen,               /* Fixed or variable length */
+    bool crcOn,                /* CRC enable */
+    bool freqHopOn,            /* Frequency hopping enable */
+    uint8_t hopPeriod,         /* Hopping period */
+    bool iqInverted,           /* IQ inversion */
+    uint32_t timeout           /* TX timeout in ms */
+)
+```
+
+### Radio.SetTxContinuousWave()
+
+```c
+void Radio.SetTxContinuousWave(
+    uint32_t freq,             /* Frequency in Hz */
+    int8_t power,              /* TX power in dBm */
+    uint16_t timeout           /* Duration in ms (0xFFFFFFFF = indefinite) */
+)
+```
+**This is the key function for CW mode.**
+
+### Radio.Standby()
+
+```c
+void Radio.Standby(void)
+```
+Put radio into standby (low power, no TX/RX).
+
+### Radio.IrqProcess()
+
+```c
+void Radio.IrqProcess(void)
+```
+Process pending radio interrupts.
 
 ## Operation Flow
 
 ```
 1. System boots → UART debug output
 2. IIS2DLPC initialized (WHO_AM_I check, wake-up config)
-3. Idle waiting for motion on INT1 (PA9)
-4. Motion detected → INT1 rises → EXTI9_5_IRQHandler() → App_Motion_Task() reads WAKE_UP_SRC
-5. Motion axis decoded (X/Y/Z) → UART debug output
-6. App_CW_Start() triggered → Radio TX starts CW pulse
-7. 15-second pulse loop (600ms ON / 1000ms OFF) with state transitions logged to UART
-8. After 15s → CW stops, return to idle
-9. Next motion triggers another sequence
+3. SUBGHZ initialized (Radio.Init, frequency set to 868 MHz)
+4. Idle, waiting for motion on INT1 (PA9)
+
+5. Motion detected → INT1 rises → EXTI9_5_IRQHandler()
+   ↓
+6. HAL_GPIO_EXTI_Callback(GPIO_PIN_9) → motion_event_pending = 1
+   ↓
+7. App_Motion_Task() reads WAKE_UP_SRC
+   ↓
+8. Motion axis decoded (X/Y/Z) → UART debug output
+   ↓
+9. App_CW_Start() → SubGHz_TX_Start_CW()
+   ↓
+10. 15-second pulse loop:
+    - 600 ms ON  → Radio.SetTxContinuousWave(...)
+    - 1000 ms OFF → Radio.Standby()
+    - State transitions logged to UART
+   ↓
+11. After 15s → App_CW_Stop() → Radio.Standby()
+    ↓
+12. Return to idle, wait for next motion
 ```
 
 ## Debug Output Example
 
 ```
-=== Wio-E5 Mini IIS2DLPC + CW System ===
+=== Wio-E5 Mini IIS2DLPC + CW System (STM32CubeWL v1.5.0) ===
 Initializing motion sensor...
 IIS2DLPC detected (WHO_AM_I = 0x44)
   CTRL1 set to ODR_50Hz
@@ -140,75 +305,103 @@ IIS2DLPC detected (WHO_AM_I = 0x44)
   WAKE_UP_DUR configured
   MD1_CFG configured (INT1=wake-up)
 IIS2DLPC any-motion setup complete
-CW transmitter ready (motion-triggered)
+Initializing SUBGHZ radio...
+SUBGHZ initialized (freq=868000000 Hz, power=14 dBm)
+
+System ready
 Waiting for motion on PA9 INT1...
 
 MOTION DETECTED: axis mask=0x07 (X=1 Y=1 Z=1)
 CW sequence started (15s total: 600ms ON / 1000ms OFF)
-  [SUBGHZ] TX CW START
+  [SUBGHZ] TX CW started (freq=868000000 Hz, power=14 dBm)
   [00000ms] CW ON
+  [SUBGHZ] TX CW stopped (radio in STDBY)
   [00601ms] CW OFF
+  [SUBGHZ] TX CW started (freq=868000000 Hz, power=14 dBm)
   [01601ms] CW ON
+  [SUBGHZ] TX CW stopped (radio in STDBY)
   [02201ms] CW OFF
   ...
   [14401ms] CW OFF
 CW sequence completed (elapsed=15000ms)
-  [SUBGHZ] TX CW STOP
+CW sequence stopped
 ```
 
 ## Compilation & Flashing
 
-1. **STM32CubeIDE Project Structure**
-   - `Core/Inc/` — Header files
-   - `Core/Src/` — Implementation files
-   - `Drivers/STM32WLE5xx_HAL_Driver/` — HAL library (generated or external)
-   - `.project`, `.cproject` — IDE configuration files
+### Build
 
-2. **Build**
+1. **Open in STM32CubeIDE**
    ```bash
-   cd /path/to/project
-   make clean
-   make all
+   git clone https://github.com/Clandestinotested/WioE5_IIS2DLPC_CW_v1.git
+   cd WioE5_IIS2DLPC_CW_v1
    ```
 
-3. **Flash (via OpenOCD or STM32CubeProgrammer)**
-   ```bash
-   openocd -f stm32wle5.cfg -c "program build/WioE5_IIS2DLPC_CW.elf verify reset exit"
+2. **Add STM32CubeWL Drivers**
+   - Copy HAL and SUBGHZ drivers from your STM32CubeWL v1.5.0 package
+   - Place in `Drivers/STM32WLE5xx_HAL_Driver/`
+
+3. **Build in STM32CubeIDE**
    ```
+   Project → Build Project
+   ```
+
+### Flash
+
+**Via ST-Link/V2 and STM32CubeProgrammer:**
+
+```bash
+STM32_Programmer_CLI -c port=SWD freq=4M -w build/WioE5_IIS2DLPC_CW.elf -v
+```
+
+**Via OpenOCD:**
+
+```bash
+openocd -f interface/stlink-v2.cfg -f target/stm32wl.cfg \
+    -c "program build/WioE5_IIS2DLPC_CW.elf verify reset exit"
+```
 
 ## Troubleshooting
 
-### IIS2DLPC Not Detected (WHO_AM_I fails)
-- Check I2C wiring: PA15 (SDA), PB15 (SCL)
-- Verify pull-up resistors (4.7 kΩ) on both lines
-- Check I2C speed: 100 kHz timing is configured to 0x00707CBBU
-- Measure I2C bus with oscilloscope to confirm clock/data signals
+### IIS2DLPC Not Detected
+- Verify PA15 (SDA) and PB15 (SCL) connections
+- Check 4.7 kΩ pull-up resistors on both lines
+- Measure I2C bus with oscilloscope (clock and data signals)
 
 ### No UART Output
-- Check USB connection (should appear as COM port)
+- Check USB connection to Wio-E5 Mini (should appear as COM port)
 - Verify baud rate: 115200
-- Check PB6 (TX) and PB7 (RX) connections
-- Ensure USART1 is enabled in system clock config
+- Ensure PB6 (TX) and PB7 (RX) are not used by other peripherals
 
 ### Motion Not Triggering
 - Verify PA9 connected to INT1 on sensor
-- Check EXTI9_5_IRQn priority and enabled status
-- Increase wake-up threshold if sensor is too sensitive (WAKE_UP_THS register)
-- Confirm sensor power supply (3.3V)
+- Confirm EXTI9_5_IRQn is enabled in NVIC
+- Increase wake-up threshold if over-sensitive (WAKE_UP_THS register)
+- Verify sensor has 3.3V power
 
-### CW Not Transmitting
-- Implement actual SUBGHZ driver calls in `SubGHz_TX_Start_CW()` and `SubGHz_TX_Stop_CW()`
-- Verify radio PA is enabled and configured
-- Check frequency and power settings match your region regulations
-- Confirm RF front-end (antenna, impedance matching) is correct
+### SUBGHZ Radio Not Starting
+- Confirm `radio.h` and `subghz_phy.h` are in include path
+- Verify linker includes `radio.c` and `subghz_phy.c` from STM32CubeWL
+- Check that radio mailbox memory is correctly defined in linker script
+- Verify RF PA (power amplifier) is enabled and configured
+- Confirm antenna is connected and impedance matched
 
-## Notes
+## Regulatory Notes
 
-- This project is a **complete template** ready for integration with your STM32WLE5 SUBGHZ driver.
-- All HAL calls are standard and compatible with STM32CubeMX-generated code.
-- Clock tree example assumes 32 MHz HSE; adjust `SystemClock_Config()` if different.
-- Replace SUBGHZ placeholder functions with your actual driver API.
+- **Europe (CE)**: 868 MHz ISM band, max 14 dBm EIRP
+- **USA (FCC)**: 915 MHz ISM band, max 30 dBm EIRP
+- **Australia (ACMA)**: 915-928 MHz, regulations apply
+
+Adjust frequency and power in `app_subghz.h` according to your region.
+
+## Next Steps
+
+1. Verify all hardware connections match the pin configuration
+2. Integrate STM32CubeWL v1.5.0 drivers from your package
+3. Compile and flash the project
+4. Open serial terminal at 115200 baud
+5. Trigger motion on the sensor → observe CW pulse sequence
 
 ## License
 
-Open source. Modify as needed for your application.
+Open source. Modify and use freely for your application.

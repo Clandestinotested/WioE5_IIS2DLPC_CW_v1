@@ -1,6 +1,7 @@
 #include "main.h"
 #include "app_motion.h"
 #include "app_cw.h"
+#include "app_subghz.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -269,11 +270,14 @@ int main(void)
     MX_I2C2_Init();
     MX_USART1_UART_Init();
 
-    UART_PrintfDebug("\r\n=== Wio-E5 Mini IIS2DLPC + CW System ===\r\n");
+    UART_PrintfDebug("\r\n=== Wio-E5 Mini IIS2DLPC + CW System (STM32CubeWL v1.5.0) ===\r\n");
     UART_PrintfDebug("Initializing motion sensor...\r\n");
     App_Motion_Init();
 
-    UART_PrintfDebug("CW transmitter ready (motion-triggered)\r\n");
+    UART_PrintfDebug("Initializing SUBGHZ radio...\r\n");
+    App_CW_Init();
+
+    UART_PrintfDebug("\r\nSystem ready\r\n");
     UART_PrintfDebug("Waiting for motion on PA9 INT1...\r\n\r\n");
 
     while (1) {
